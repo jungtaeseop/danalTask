@@ -42,12 +42,6 @@ import lombok.extern.slf4j.Slf4j;
 @Configuration
 @RequiredArgsConstructor
 public class BatchFileConfiguration {
-
-	@Value("classpath*:/storeinfo/*.csv")
-	private Resource[] inputPath;
-
-	private final StoreInfoRepository storeInfoRepository;
-
 	private static final String[] FIELD_NAMES = {
 		"storeNumber", "storeName", "branchName", "largeCategoryCode", "largeCategoryName",
 		"mediumCategoryCode", "mediumCategoryName", "smallCategoryCode", "smallCategoryName",
@@ -59,32 +53,22 @@ public class BatchFileConfiguration {
 		"dongInfo", "floorInfo", "roomInfo", "longitude", "latitude"
 	};
 	private static final String DELIMITER = ",";
-	private static final int CHUNK_SIZE = 100;
+	private static final int CHUNK_SIZE = 10;
+
+
+	private final StoreInfoRepository storeInfoRepository;
 
 	@Bean(name="csvJob")
-	public Job job(JobRepository jobRepository, PlatformTransactionManager transactionManager) {
+	public Job job(JobRepository jobRepository, PlatformTransactionManager transactionManager) throws IOException {
 		return new JobBuilder("csv-job",jobRepository)
 			.listener(jobLoggerListener())
 			.flow(setp(jobRepository, transactionManager))
-			.next(postProcessingStep(jobRepository, transactionManager))
 			.end()
 			.build();
 	}
 
 	@Bean
-	public Step postProcessingStep(JobRepository jobRepository, PlatformTransactionManager transactionManager) {
-		return new StepBuilder("postProcessingStep", jobRepository)
-			.tasklet((contribution, chunkContext) -> {
-				// 파일 후처리 작업 수행
-				// 예: 헤더/푸터 추가, 파일 이동 등
-				return RepeatStatus.FINISHED;
-			}, transactionManager)
-			.transactionManager(transactionManager)
-			.build();
-	}
-
-	@Bean
-	public Step setp(JobRepository jobRepository, PlatformTransactionManager transactionManager) {
+	public Step setp(JobRepository jobRepository, PlatformTransactionManager transactionManager) throws IOException {
 		return new StepBuilder("csv-step", jobRepository)
 			.<StoreInfoDto, StoreInfo>chunk(CHUNK_SIZE, transactionManager)
 			.reader(multiResourceReader())
@@ -97,25 +81,24 @@ public class BatchFileConfiguration {
 
 
 	@Bean
-	public MultiResourceItemReader<StoreInfoDto> multiResourceReader() {
-		MultiResourceItemReader<StoreInfoDto> resourceItemReader = new MultiResourceItemReader<>();
-		resourceItemReader.setDelegate(itemReader());
-		resourceItemReader.setResources(inputPath);
-
-		return resourceItemReader;
-	}
-
-	@Bean
-	public FlatFileItemReader<StoreInfoDto> itemReader(){
-		FlatFileItemReader<StoreInfoDto> reader = new FlatFileItemReader<>();
-		reader.setName("csv-reader");
-		reader.setLinesToSkip(1);
-		reader.setLineMapper(lineMapper());
-
+	public MultiResourceItemReader<StoreInfoDto> multiResourceReader() throws IOException {
+		MultiResourceItemReader<StoreInfoDto> reader = new MultiResourceItemReader<>();
+		reader.setDelegate(itemReader());
+		reader.setResources(new PathMatchingResourcePatternResolver()
+			.getResources("classpath:storeinfo/*.csv"));
 		return reader;
 	}
 
-	public LineMapper<StoreInfoDto> lineMapper() {
+	public FlatFileItemReader<StoreInfoDto> itemReader() {
+		FlatFileItemReader<StoreInfoDto> itemReader = new FlatFileItemReader<>();
+		itemReader.setName("csv-reader");
+		itemReader.setLinesToSkip(1);
+		itemReader.setLineMapper(lineMapper());
+
+		return itemReader;
+	}
+
+	private LineMapper<StoreInfoDto> lineMapper() {
 		DefaultLineMapper<StoreInfoDto> lineMapper = new DefaultLineMapper<>();
 
 		DelimitedLineTokenizer tokenizer = createTokenizer();
@@ -127,7 +110,7 @@ public class BatchFileConfiguration {
 		return lineMapper;
 	}
 
-	public DelimitedLineTokenizer createTokenizer() {
+	private DelimitedLineTokenizer createTokenizer() {
 		DelimitedLineTokenizer tokenizer = new DelimitedLineTokenizer();
 		tokenizer.setDelimiter(DELIMITER);
 		tokenizer.setNames(FIELD_NAMES);
@@ -137,7 +120,7 @@ public class BatchFileConfiguration {
 
 	public TaskExecutor taskExecutor() {
 		SimpleAsyncTaskExecutor asyncTaskExecutor = new SimpleAsyncTaskExecutor();
-		asyncTaskExecutor.setConcurrencyLimit(100);
+		asyncTaskExecutor.setConcurrencyLimit(10);
 		return asyncTaskExecutor;
 	}
 
